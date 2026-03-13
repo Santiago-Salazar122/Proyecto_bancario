@@ -30,16 +30,13 @@ import java.util.Objects;
  * - Can only view/operate on their own products.
  * - Cannot view other clients' information or business accounts.
  */
-public class IndividualClient {
+public class IndividualClient extends Client {
 
     private static final int MINIMUM_AGE = 18;
 
     private final String identificationNumber;
     private String fullName;
-    private Email email;
-    private PhoneNumber phoneNumber;
     private LocalDate dateOfBirth;
-    private Address address;
 
     /**
      * Creates a new Individual Client with all business validations.
@@ -55,26 +52,15 @@ public class IndividualClient {
                             Email email, PhoneNumber phoneNumber,
                             LocalDate dateOfBirth, Address address) {
 
+        super(email, phoneNumber, address, "The email address is required.", "The address is required.");
+
         validateIdentificationNumber(identificationNumber);
         validateFullName(fullName);
         validateDateOfBirth(dateOfBirth);
 
-        if (email == null) {
-            throw new IllegalArgumentException("The email address is required.");
-        }
-        if (phoneNumber == null) {
-            throw new IllegalArgumentException("The phone number is required.");
-        }
-        if (address == null) {
-            throw new IllegalArgumentException("The address is required.");
-        }
-
         this.identificationNumber = identificationNumber.trim();
         this.fullName = fullName.trim();
-        this.email = email;
-        this.phoneNumber = phoneNumber;
         this.dateOfBirth = dateOfBirth;
-        this.address = address;
     }
 
     // ==================== BUSINESS METHODS ====================
@@ -95,19 +81,6 @@ public class IndividualClient {
      */
     public boolean isOfLegalAge() {
         return calculateAge() >= MINIMUM_AGE;
-    }
-
-    /**
-     * Updates the client's contact information.
-     *
-     * @param newEmail       new email address
-     * @param newPhoneNumber new phone number
-     * @param newAddress     new address
-     */
-    public void updateContactInfo(Email newEmail, PhoneNumber newPhoneNumber, Address newAddress) {
-        if (newEmail != null) this.email = newEmail;
-        if (newPhoneNumber != null) this.phoneNumber = newPhoneNumber;
-        if (newAddress != null) this.address = newAddress;
     }
 
     // ==================== PRIVATE VALIDATIONS ====================
@@ -150,20 +123,8 @@ public class IndividualClient {
         return fullName;
     }
 
-    public Email getEmail() {
-        return email;
-    }
-
-    public PhoneNumber getPhoneNumber() {
-        return phoneNumber;
-    }
-
     public LocalDate getDateOfBirth() {
         return dateOfBirth;
-    }
-
-    public Address getAddress() {
-        return address;
     }
 
     public String getRole() {
@@ -194,8 +155,8 @@ public class IndividualClient {
         return "IndividualClient{" +
             "identificationNumber='" + identificationNumber + '\'' +
             ", fullName='" + fullName + '\'' +
-            ", email=" + email +
-            ", phoneNumber=" + phoneNumber +
+            ", email=" + getEmail() +
+            ", phoneNumber=" + getPhoneNumber() +
             ", dateOfBirth=" + dateOfBirth +
             '}';
     }

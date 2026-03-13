@@ -20,7 +20,7 @@ import java.util.Objects;
  * - Tax identification number→ taxId (UNIQUE across the system)
  * - Email address            → email (Value Object)
  * - Phone number             → phoneNumber (Value Object)
- * - Fiscal address           → fiscalAddress (Value Object)
+ * - Fiscal address           → address (Value Object)
  * - Legal representative     → legalRepresentativeId (reference to IndividualClient)
  * - Role                     → "Company Client" (fixed value)
  *
@@ -31,13 +31,10 @@ import java.util.Objects;
  * - Can delegate permissions to operational users (Company Employees).
  * - Manages the list of authorized employees and supervisors.
  */
-public class CompanyClient {
+public class CompanyClient extends Client {
 
     private final String taxId;
     private String companyName;
-    private Email email;
-    private PhoneNumber phoneNumber;
-    private Address fiscalAddress;
     private String legalRepresentativeId;
 
     /**
@@ -60,25 +57,20 @@ public class CompanyClient {
                          PhoneNumber phoneNumber, Address fiscalAddress,
                          String legalRepresentativeId) {
 
+        super(
+            email,
+            phoneNumber,
+            fiscalAddress,
+            "The corporate email address is required.",
+            "The fiscal address is required."
+        );
+
         validateTaxId(taxId);
         validateCompanyName(companyName);
         validateLegalRepresentative(legalRepresentativeId);
 
-        if (email == null) {
-            throw new IllegalArgumentException("The corporate email address is required.");
-        }
-        if (phoneNumber == null) {
-            throw new IllegalArgumentException("The phone number is required.");
-        }
-        if (fiscalAddress == null) {
-            throw new IllegalArgumentException("The fiscal address is required.");
-        }
-
         this.taxId = taxId.trim();
         this.companyName = companyName.trim();
-        this.email = email;
-        this.phoneNumber = phoneNumber;
-        this.fiscalAddress = fiscalAddress;
         this.legalRepresentativeId = legalRepresentativeId.trim();
         this.authorizedEmployees = new ArrayList<>();
     }
@@ -126,15 +118,6 @@ public class CompanyClient {
         return authorizedEmployees.contains(employeeId.trim());
     }
 
-    /**
-     * Updates the company's contact information.
-     */
-    public void updateContactInfo(Email newEmail, PhoneNumber newPhoneNumber, Address newAddress) {
-        if (newEmail != null) this.email = newEmail;
-        if (newPhoneNumber != null) this.phoneNumber = newPhoneNumber;
-        if (newAddress != null) this.fiscalAddress = newAddress;
-    }
-
     // ==================== PRIVATE VALIDATIONS ====================
 
     private void validateTaxId(String taxId) {
@@ -167,16 +150,8 @@ public class CompanyClient {
         return companyName;
     }
 
-    public Email getEmail() {
-        return email;
-    }
-
-    public PhoneNumber getPhoneNumber() {
-        return phoneNumber;
-    }
-
     public Address getFiscalAddress() {
-        return fiscalAddress;
+        return getAddress();
     }
 
     public String getLegalRepresentativeId() {
@@ -219,7 +194,7 @@ public class CompanyClient {
         return "CompanyClient{" +
             "taxId='" + taxId + '\'' +
             ", companyName='" + companyName + '\'' +
-            ", email=" + email +
+            ", email=" + getEmail() +
             ", legalRepresentative='" + legalRepresentativeId + '\'' +
             ", authorizedEmployees=" + authorizedEmployees.size() +
             '}';
