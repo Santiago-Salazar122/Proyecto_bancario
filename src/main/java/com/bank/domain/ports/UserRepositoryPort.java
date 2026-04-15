@@ -1,4 +1,4 @@
-package com.bank.application.port.out;
+package com.bank.domain.ports;
 
 import com.bank.domain.model.user.User;
 
@@ -10,3 +10,4 @@ public interface UserRepositoryPort {
 
     Optional<User> findByRelatedId(String relatedId);
 }
+

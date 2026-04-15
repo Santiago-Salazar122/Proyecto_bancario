@@ -1,4 +1,4 @@
-package com.bank.application.port.out;
+package com.bank.domain.ports;
 
 import com.bank.domain.model.transfer.Transfer;
 
@@ -15,3 +15,4 @@ public interface TransferRepositoryPort {
 
     void save(Transfer transfer);
 }
+

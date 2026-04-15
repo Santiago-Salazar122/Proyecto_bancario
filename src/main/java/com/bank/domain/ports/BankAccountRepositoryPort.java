@@ -1,4 +1,4 @@
-package com.bank.application.port.out;
+package com.bank.domain.ports;
 
 import com.bank.domain.model.account.BankAccount;
 
@@ -12,3 +12,4 @@ public interface BankAccountRepositoryPort {
 
     void save(BankAccount account);
 }
+
