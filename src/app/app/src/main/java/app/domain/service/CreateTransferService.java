@@ -1,0 +1,78 @@
+package app.domain.service;
+
+import app.domain.enums.UserRole;
+import app.domain.model.account.BankAccount;
+import app.domain.model.transfer.Transfer;
+import app.domain.model.user.User;
+import app.domain.ports.BankAccountRepositoryPort;
+import app.domain.ports.TransferRepositoryPort;
+import app.domain.ports.UserRepositoryPort;
+import app.domain.valueobject.Money;
+
+public class CreateTransferService {
+
+    private final TransferRepositoryPort transferRepository;
+    private final BankAccountRepositoryPort accountRepository;
+    private final UserRepositoryPort userRepository;
+    private final Money approvalThreshold;
+
+    public CreateTransferService(
+        TransferRepositoryPort transferRepository,
+        BankAccountRepositoryPort accountRepository,
+        UserRepositoryPort userRepository,
+        Money approvalThreshold
+    ) {
+        this.transferRepository = transferRepository;
+        this.accountRepository = accountRepository;
+        this.userRepository = userRepository;
+        this.approvalThreshold = approvalThreshold;
+    }
+
+    public Transfer execute(int transferId, String sourceAccount, String targetAccount, Money amount, int creatorUserId) {
+        if (transferRepository.existsById(transferId)) {
+            throw new IllegalStateException("Transfer ID already exists: " + transferId);
+        }
+
+        User creator = requireUser(creatorUserId);
+        if (!creator.canOperate()) {
+            throw new IllegalStateException("The creator user cannot operate.");
+        }
+
+        boolean requiresApproval = requiresSupervisorApproval(creator, amount);
+        Transfer transfer = new Transfer(transferId, sourceAccount, targetAccount, amount, creatorUserId, requiresApproval);
+
+        if (!requiresApproval) {
+            executeFundsMovement(sourceAccount, targetAccount, amount);
+        }
+
+        transferRepository.save(transfer);
+        return transfer;
+    }
+
+    private void executeFundsMovement(String sourceAccountNumber, String targetAccountNumber, Money amount) {
+        BankAccount sourceAccount = accountRepository.findByAccountNumber(sourceAccountNumber)
+            .orElseThrow(() -> new IllegalStateException("Source account not found: " + sourceAccountNumber));
+
+        BankAccount targetAccount = accountRepository.findByAccountNumber(targetAccountNumber)
+            .orElseThrow(() -> new IllegalStateException("Target account not found: " + targetAccountNumber));
+
+        sourceAccount.debit(amount);
+        targetAccount.credit(amount);
+
+        accountRepository.save(sourceAccount);
+        accountRepository.save(targetAccount);
+    }
+
+    private boolean requiresSupervisorApproval(User creator, Money amount) {
+        boolean companyFlow = creator.hasRole(UserRole.COMPANY_CLIENT)
+            || creator.hasRole(UserRole.COMPANY_EMPLOYEE)
+            || creator.hasRole(UserRole.COMPANY_SUPERVISOR);
+
+        return companyFlow && amount.isGreaterThan(approvalThreshold);
+    }
+
+    private User requireUser(int userId) {
+        return userRepository.findById(userId)
+            .orElseThrow(() -> new IllegalStateException("User not found: " + userId));
+    }
+}
