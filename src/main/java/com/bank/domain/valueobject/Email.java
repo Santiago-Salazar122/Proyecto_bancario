@@ -1,79 +1,59 @@
 package com.bank.domain.valueobject;
 
+import jakarta.persistence.Embeddable;
 import java.util.Objects;
 
 /**
- * Value Object representing an email address.
+ * Value Object que representa una dirección de correo electrónico.
  *
- * Immutable: once created, it cannot be modified.
+ * @Embeddable le dice a JPA que este objeto puede ser embebido
+ * dentro de una entidad (@Entity) como si sus campos fueran
+ * columnas directas de esa tabla. En User, el campo "value"
+ * se mapea a la columna "email" via @AttributeOverride.
  *
- * Validations:
- * - Required (cannot be null or blank).
- * - Must contain the character "@".
- * - Must have a valid domain after "@" (at least one dot).
- *
- * In DDD, Value Objects encapsulate validation within the object itself,
- * guaranteeing that an invalid instance can never exist in the domain.
+ * Inmutable: una vez creado no se puede modificar.
+ * Valida que tenga "@" y un dominio válido.
  */
+@Embeddable
 public class Email {
 
-    private final String value;
+    private String value;
 
-    /**
-     * Creates an Email instance validating the format.
-     *
-     * @param value the email address
-     * @throws IllegalArgumentException if the value is null, blank, or does not match the format
-     */
+    /** Constructor vacío requerido por JPA para @Embeddable. */
+    protected Email() {}
+
     public Email(String value) {
-        if (value == null || value.isBlank()) {
+        if (value == null || value.isBlank())
             throw new IllegalArgumentException("The email address is required.");
-        }
 
         String cleaned = value.trim().toLowerCase();
 
-        if (!cleaned.contains("@")) {
+        if (!cleaned.contains("@"))
             throw new IllegalArgumentException(
-                "The email address must contain '@'. Value received: " + value
-            );
-        }
+                "The email must contain '@'. Value: " + value);
 
         String[] parts = cleaned.split("@", 2);
 
-        if (parts[0].isEmpty()) {
+        if (parts[0].isEmpty())
             throw new IllegalArgumentException(
-                "The email address must have a user before '@'. Value received: " + value
-            );
-        }
+                "The email must have a user before '@'. Value: " + value);
 
-        if (!parts[1].contains(".") || parts[1].startsWith(".") || parts[1].endsWith(".")) {
+        if (!parts[1].contains(".") || parts[1].startsWith(".") || parts[1].endsWith("."))
             throw new IllegalArgumentException(
-                "The email address must have a valid domain after '@'. Value received: " + value
-            );
-        }
+                "The email must have a valid domain after '@'. Value: " + value);
 
         this.value = cleaned;
     }
 
-    public String getValue() {
-        return value;
-    }
+    public String getValue() { return value; }
 
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
-        Email email = (Email) o;
-        return Objects.equals(value, email.value);
+        return Objects.equals(value, ((Email) o).value);
     }
 
-    @Override
-    public int hashCode() {
-        return Objects.hash(value);
-    }
-
-    @Override
-    public String toString() {
-        return value;
-    }
+    @Override public int hashCode() { return Objects.hash(value); }
+    @Override public String toString() { return value; }
 }

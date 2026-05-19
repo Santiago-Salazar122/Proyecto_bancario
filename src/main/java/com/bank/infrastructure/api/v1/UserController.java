@@ -9,7 +9,10 @@ import com.bank.domain.valueobject.Address;
 import com.bank.domain.valueobject.Email;
 import com.bank.domain.valueobject.PhoneNumber;
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.*;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -76,7 +79,7 @@ public class UserController {
     static class RegisterUserRequest {
         @NotBlank(message = "Full name is required") @Size(max = 100) String fullName;
         @NotBlank(message = "Identification ID is required") @Size(max = 20) String identificationId;
-        @NotBlank @Email(message = "Email must contain @ and a valid domain") String email;
+        @NotBlank @jakarta.validation.constraints.Email(message = "Email must contain @ and a valid domain") String email;
         @NotBlank @Pattern(regexp = "\\d{7,15}", message = "Phone must have 7 to 15 digits") String phoneNumber;
         LocalDate dateOfBirth;
         @NotBlank(message = "Address is required") String address;

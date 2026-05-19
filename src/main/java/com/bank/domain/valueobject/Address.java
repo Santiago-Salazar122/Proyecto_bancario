@@ -1,54 +1,36 @@
 package com.bank.domain.valueobject;
 
+import jakarta.persistence.Embeddable;
 import java.util.Objects;
 
 /**
- * Value Object representing a mailing or fiscal address.
- *
- * Immutable: once created, it cannot be modified.
- *
- * Validations:
- * - Required (cannot be null or blank).
- *
- * Modelled as a Value Object to encapsulate validation and allow
- * future extensions (splitting into street, city, postal code, etc.).
+ * Value Object que representa una dirección física.
+ * @Embeddable permite que JPA lo almacene directamente en la tabla users.
+ * El campo "fullAddress" se mapea a la columna "address" via @AttributeOverride en User.
  */
+@Embeddable
 public class Address {
 
-    private final String fullAddress;
+    private String fullAddress;
 
-    /**
-     * Creates an Address instance, validating that it is not empty.
-     *
-     * @param fullAddress the complete address as text
-     * @throws IllegalArgumentException if null or blank
-     */
+    /** Constructor vacío requerido por JPA. */
+    protected Address() {}
+
     public Address(String fullAddress) {
-        if (fullAddress == null || fullAddress.isBlank()) {
+        if (fullAddress == null || fullAddress.isBlank())
             throw new IllegalArgumentException("The address is required.");
-        }
         this.fullAddress = fullAddress.trim();
     }
 
-    public String getFullAddress() {
-        return fullAddress;
-    }
+    public String getFullAddress() { return fullAddress; }
 
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
-        Address address = (Address) o;
-        return Objects.equals(fullAddress, address.fullAddress);
+        return Objects.equals(fullAddress, ((Address) o).fullAddress);
     }
 
-    @Override
-    public int hashCode() {
-        return Objects.hash(fullAddress);
-    }
-
-    @Override
-    public String toString() {
-        return fullAddress;
-    }
+    @Override public int hashCode() { return Objects.hash(fullAddress); }
+    @Override public String toString() { return fullAddress; }
 }
