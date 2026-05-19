@@ -5,74 +5,105 @@ import com.bank.domain.enums.UserStatus;
 import com.bank.domain.valueobject.Address;
 import com.bank.domain.valueobject.Email;
 import com.bank.domain.valueobject.PhoneNumber;
+import jakarta.persistence.*;
 
 import java.time.LocalDate;
 import java.time.Period;
 import java.util.Objects;
 
 /**
- * Root Entity representing any user of the banking system.
+ * Entidad raíz que representa a cualquier usuario del sistema bancario.
  *
- * This is the centralized user entity. All users (clients, employees, analysts)
- * share this base structure.
+ * Se mapea a la tabla "users" en MySQL (via JPA/Hibernate).
+ * Todos los usuarios comparten esta misma entidad:
+ * clientes, empleados, analistas, supervisores, etc.
+ * El campo "role" distingue el tipo.
  *
- * Field mappings:
- * - User_ID              → userId
- * - Related_ID           → relatedId (reference to the associated Client entity)
- * - Full_Name            → fullName
- * - Identification_ID    → identificationId (DNI / National ID / Tax ID - UNIQUE)
- * - Email_Address        → email (Value Object)
- * - Phone_Number         → phoneNumber (Value Object)
- * - Date_Of_Birth        → dateOfBirth
- * - Address              → address (Value Object)
- * - System_Role          → role (Enum)
- * - User_Status          → status (Enum)
- *
- * Applicable business rules:
- * - Username and password are required for authentication.
- * - Only users with ACTIVE status can operate.
- * - The uniqueness of Identification_ID is validated at the service/repository level.
+ * Reglas de negocio implementadas aquí:
+ * - Solo usuarios ACTIVE pueden operar (ver canOperate()).
+ * - INDIVIDUAL_CLIENT debe ser mayor de 18 años (validateLegalAge()).
+ * - identificationId debe ser único — validado en RegisterUserService.
  */
+@Entity
+@Table(name = "users")
 public class User {
 
-    private final int userId;
-    private String relatedId;
-    private String fullName;
-    private String identificationId;
-    private Email email;
-    private PhoneNumber phoneNumber;
-    private LocalDate dateOfBirth;
-    private Address address;
-    private UserRole role;
-    private UserStatus status;
+    /**
+     * ID auto-generado por MySQL (AUTO_INCREMENT).
+     * GenerationType.IDENTITY delega el incremento a la base de datos.
+     */
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "user_id")
+    private Long userId;
 
-    // Authentication fields
-    private String username;
-    private String password;
+    /** Referencia al cliente asociado. Null para empleados internos. */
+    @Column(name = "related_id", length = 30)
+    private String relatedId;
+
+    @Column(name = "full_name", nullable = false, length = 100)
+    private String fullName;
 
     /**
-     * Full constructor to create a system user.
-     *
-     * @param userId           unique identifier of the user in the system
-     * @param relatedId        identifier of the associated client entity (may be null for internal employees)
-     * @param fullName         full name of the user
-     * @param identificationId identification number (DNI/National ID/Tax ID) - must be unique
-     * @param email            email address (Value Object with validation)
-     * @param phoneNumber      phone number (Value Object with validation)
-     * @param dateOfBirth      date of birth (may be null for companies)
-     * @param address          residence or contact address (Value Object)
-     * @param role             role assigned in the system
-     * @param username         username for authentication
-     * @param password         password for authentication
+     * Número de identificación (Cédula, DNI, NIT).
+     * unique = true crea un índice UNIQUE en MySQL.
      */
-    public User(int userId, String relatedId, String fullName,
-                String identificationId, Email email, PhoneNumber phoneNumber,
-                LocalDate dateOfBirth, Address address, UserRole role,
-                String username, String password) {
+    @Column(name = "identification_id", nullable = false, unique = true, length = 20)
+    private String identificationId;
+
+    /**
+     * Los Value Objects (Email, PhoneNumber, Address) se almacenan
+     * como columnas simples en MySQL usando @Embedded.
+     * @AttributeOverride mapea el campo interno del VO al nombre de columna correcto.
+     */
+    @Embedded
+    @AttributeOverride(name = "value",
+        column = @Column(name = "email", nullable = false, length = 100))
+    private Email email;
+
+    @Embedded
+    @AttributeOverride(name = "number",
+        column = @Column(name = "phone_number", nullable = false, length = 15))
+    private PhoneNumber phoneNumber;
+
+    @Column(name = "date_of_birth")
+    private LocalDate dateOfBirth;
+
+    @Embedded
+    @AttributeOverride(name = "fullAddress",
+        column = @Column(name = "address", nullable = false, length = 200))
+    private Address address;
+
+    /**
+     * EnumType.STRING guarda el nombre del enum como texto en MySQL.
+     * Más legible que EnumType.ORDINAL (que guarda el número de posición).
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "role", nullable = false, length = 50)
+    private UserRole role;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", nullable = false, length = 20)
+    private UserStatus status;
+
+    @Column(name = "username", nullable = false, unique = true, length = 50)
+    private String username;
+
+    @Column(name = "password", nullable = false, length = 255)
+    private String password;
+
+    /** Constructor sin argumentos requerido por JPA/Hibernate. */
+    protected User() {}
+
+    /**
+     * Constructor completo para crear un usuario del sistema.
+     */
+    public User(String relatedId, String fullName, String identificationId,
+                Email email, PhoneNumber phoneNumber, LocalDate dateOfBirth,
+                Address address, UserRole role, String username, String password) {
 
         validateRequiredFields(fullName, identificationId, username, password);
 
-        this.userId = userId;
         this.relatedId = relatedId;
         this.fullName = fullName;
         this.identificationId = identificationId;
@@ -81,175 +112,95 @@ public class User {
         this.dateOfBirth = dateOfBirth;
         this.address = address;
         this.role = role;
-        this.status = UserStatus.ACTIVE; // By default, a new user is active
+        this.status = UserStatus.ACTIVE; // Todo usuario nuevo comienza ACTIVO
         this.username = username;
         this.password = password;
 
-        // If the user is an Individual Client, validate legal age
+        // Regla de negocio: personas naturales deben ser mayores de edad
         if (role == UserRole.INDIVIDUAL_CLIENT) {
             validateLegalAge(dateOfBirth);
         }
     }
 
-    // ==================== BUSINESS METHODS ====================
+    // ═══════════════════ MÉTODOS DE NEGOCIO ═══════════════════
 
-    /**
-     * Checks whether the user can perform operations in the system.
-     * Only users with ACTIVE status can operate.
-     *
-     * @return true if the status is ACTIVE
-     */
-    public boolean canOperate() {
-        return status.canOperate();
-    }
+    /** Solo los usuarios ACTIVE pueden realizar operaciones. */
+    public boolean canOperate() { return status.canOperate(); }
 
-    /**
-     * Checks whether the provided credentials match the user's credentials.
-     *
-     * @param username username provided
-     * @param password password provided
-     * @return true if both credentials match
-     */
+    /** Verifica si el usuario tiene un rol específico. */
+    public boolean hasRole(UserRole requiredRole) { return this.role == requiredRole; }
+
+    /** Verifica credenciales para autenticación. */
     public boolean authenticate(String username, String password) {
-        return this.username.equals(username)
-            && this.password.equals(password);
+        return this.username.equals(username) && this.password.equals(password);
     }
 
-    /**
-     * Checks whether the user has a specific role.
-     * Useful for authorization checks before each operation.
-     *
-     * @param requiredRole the role required for the operation
-     * @return true if the user has that role
-     */
-    public boolean hasRole(UserRole requiredRole) {
-        return this.role == requiredRole;
-    }
-
-    /**
-     * Changes the user's status.
-     *
-     * @param newStatus the new status to assign
-     */
+    /** Cambia el estado del usuario (ACTIVE, INACTIVE, BLOCKED). */
     public void changeStatus(UserStatus newStatus) {
-        if (newStatus == null) {
-            throw new IllegalArgumentException("The new status cannot be null.");
-        }
+        if (newStatus == null) throw new IllegalArgumentException("The new status cannot be null.");
         this.status = newStatus;
     }
 
-    // ==================== PRIVATE VALIDATIONS ====================
+    /** Calcula la edad del usuario en años. */
+    public int calculateAge() {
+        if (dateOfBirth == null) return -1;
+        return Period.between(dateOfBirth, LocalDate.now()).getYears();
+    }
+
+    // ═══════════════════ VALIDACIONES PRIVADAS ═══════════════════
 
     private void validateRequiredFields(String name, String identification,
                                         String user, String pass) {
-        if (name == null || name.isBlank()) {
+        if (name == null || name.isBlank())
             throw new IllegalArgumentException("The full name is required.");
-        }
-        if (identification == null || identification.isBlank()) {
+        if (identification == null || identification.isBlank())
             throw new IllegalArgumentException("The identification number is required.");
-        }
-        if (user == null || user.isBlank()) {
+        if (user == null || user.isBlank())
             throw new IllegalArgumentException("The username is required.");
-        }
-        if (pass == null || pass.isBlank()) {
+        if (pass == null || pass.isBlank())
             throw new IllegalArgumentException("The password is required.");
-        }
     }
 
-    /**
-     * Validates that the person is at least 18 years old.
-     * Business rule: Only individuals of legal age can be individual clients.
-     *
-     * @param dateOfBirth date of birth to validate
-     * @throws IllegalArgumentException if the person is under 18
-     */
+    /** Valida mayoría de edad (mínimo 18 años). */
     private void validateLegalAge(LocalDate dateOfBirth) {
-        if (dateOfBirth == null) {
-            throw new IllegalArgumentException(
-                "The date of birth is required for Individual Client."
-            );
-        }
+        if (dateOfBirth == null)
+            throw new IllegalArgumentException("Date of birth is required for Individual Client.");
         int age = Period.between(dateOfBirth, LocalDate.now()).getYears();
-        if (age < 18) {
+        if (age < 18)
             throw new IllegalArgumentException(
-                "The client must be of legal age (at least 18 years old). Calculated age: " + age
-            );
-        }
+                "The client must be of legal age (at least 18 years). Calculated age: " + age);
     }
 
-    // ==================== GETTERS ====================
+    // ═══════════════════ GETTERS ═══════════════════
 
-    public int getUserId() {
-        return userId;
-    }
+    public Long getUserId()             { return userId; }
+    public String getRelatedId()        { return relatedId; }
+    public String getFullName()         { return fullName; }
+    public String getIdentificationId() { return identificationId; }
+    public Email getEmail()             { return email; }
+    public PhoneNumber getPhoneNumber() { return phoneNumber; }
+    public LocalDate getDateOfBirth()   { return dateOfBirth; }
+    public Address getAddress()         { return address; }
+    public UserRole getRole()           { return role; }
+    public UserStatus getStatus()       { return status; }
+    public String getUsername()         { return username; }
 
-    public String getRelatedId() {
-        return relatedId;
-    }
+    public void setRelatedId(String relatedId) { this.relatedId = relatedId; }
+    public void setFullName(String fullName)   { this.fullName = fullName; }
 
-    public String getFullName() {
-        return fullName;
-    }
-
-    public String getIdentificationId() {
-        return identificationId;
-    }
-
-    public Email getEmail() {
-        return email;
-    }
-
-    public PhoneNumber getPhoneNumber() {
-        return phoneNumber;
-    }
-
-    public LocalDate getDateOfBirth() {
-        return dateOfBirth;
-    }
-
-    public Address getAddress() {
-        return address;
-    }
-
-    public UserRole getRole() {
-        return role;
-    }
-
-    public UserStatus getStatus() {
-        return status;
-    }
-
-    public String getUsername() {
-        return username;
-    }
-
-    // ==================== EQUALS, HASHCODE, TOSTRING ====================
-
-    /**
-     * Two users are equal if they have the same userId.
-     * In DDD, entities are compared by identity, not by attributes.
-     */
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
-        User user = (User) o;
-        return userId == user.userId;
+        return Objects.equals(userId, ((User) o).userId);
     }
 
-    @Override
-    public int hashCode() {
-        return Objects.hash(userId);
-    }
+    @Override public int hashCode() { return Objects.hash(userId); }
 
     @Override
     public String toString() {
-        return "User{" +
-            "userId=" + userId +
-            ", fullName='" + fullName + '\'' +
-            ", identificationId='" + identificationId + '\'' +
-            ", role=" + role +
-            ", status=" + status +
-            '}';
+        return "User{userId=" + userId + ", fullName='" + fullName + '\''
+            + ", identificationId='" + identificationId + '\''
+            + ", role=" + role + ", status=" + status + '}';
     }
 }

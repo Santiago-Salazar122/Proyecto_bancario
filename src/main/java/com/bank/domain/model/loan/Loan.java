@@ -1,114 +1,113 @@
 package com.bank.domain.model.loan;
 
 import com.bank.domain.enums.LoanStatus;
+import com.bank.domain.enums.LoanType;
 import com.bank.domain.valueobject.Money;
+import jakarta.persistence.*;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.Objects;
 
 /**
- * Aggregate Root Entity representing a Bank Loan / Credit.
+ * Entidad raíz que representa un Préstamo / Crédito bancario.
+ * Se mapea a la tabla "loans" en MySQL.
  *
- * Manages the full lifecycle of the loan: request → review → approval/rejection → disbursement.
- * State transitions are controlled by business methods that enforce the strict rules defined.
+ * Flujo de aprobación:
+ * 1. Se crea con estado UNDER_REVIEW.
+ * 2. Solo el INTERNAL_ANALYST puede aprobar → APPROVED o rechazar → REJECTED.
+ * 3. Solo desde APPROVED se puede desembolsar → DISBURSED.
  *
- * Field mappings:
- * - Loan_ID                  → loanId
- * - Loan_Type                → loanType
- * - Requesting_Client_ID     → requestingClientId
- * - Requested_Amount         → requestedAmount (Value Object Money)
- * - Approved_Amount          → approvedAmount (Value Object Money)
- * - Interest_Rate            → interestRate
- * - Term_Months              → termMonths
- * - Loan_Status              → status (Enum)
- * - Approval_Date            → approvalDate
- * - Disbursement_Date        → disbursementDate
- * - Disbursement_Target_Account → disbursementTargetAccount
- *
- * Approval flow:
- * 1. Created with status UNDER_REVIEW.
- * 2. Only the Internal Analyst can approve (→ APPROVED) or reject (→ REJECTED).
- * 3. Only from APPROVED can the loan be disbursed (→ DISBURSED).
- *
- * Business rules:
- * - The requesting client must be valid and active.
- * - State transitions are strict (see LoanStatus).
- * - For disbursement: the target account must be defined and active.
- * - On disbursement: the Approved_Amount must be > 0 and is credited to the target account.
+ * Al desembolsar: el servicio acredita el montoAprobado a la cuenta destino en MySQL.
  */
+@Entity
+@Table(name = "loans")
 public class Loan {
 
-    private final int loanId;
-    private final String loanType;
-    private final String requestingClientId;
-    private final Money requestedAmount;
-    private Money approvedAmount;
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "loan_id")
+    private Long loanId;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "loan_type", nullable = false, length = 20)
+    private LoanType loanType;
+
+    @Column(name = "requesting_client_id", nullable = false, length = 20)
+    private String requestingClientId;
+
+    /** Saldo almacenado como BigDecimal en MySQL para precisión exacta. */
+    @Column(name = "requested_amount", nullable = false, precision = 19, scale = 2)
+    private BigDecimal requestedAmount;
+
+    @Column(name = "approved_amount", precision = 19, scale = 2)
+    private BigDecimal approvedAmount;
+
+    @Column(name = "interest_rate", precision = 5, scale = 2)
     private BigDecimal interestRate;
-    private final int termMonths;
+
+    @Column(name = "term_months", nullable = false)
+    private int termMonths;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", nullable = false, length = 20)
     private LoanStatus status;
+
+    @Column(name = "approval_date")
     private LocalDateTime approvalDate;
+
+    @Column(name = "disbursement_date")
     private LocalDateTime disbursementDate;
+
+    @Column(name = "disbursement_target_account", length = 20)
     private String disbursementTargetAccount;
 
-    // Audit fields for the approval flow
-    private int approverAnalystId;
-    private final LocalDateTime creationDate;
+    @Column(name = "approver_analyst_id")
+    private Long approverAnalystId;
+
+    @Column(name = "creation_date", nullable = false)
+    private LocalDateTime creationDate;
+
+    protected Loan() {}
 
     /**
-     * Creates a new loan request.
-     * The initial status is always UNDER_REVIEW.
-     *
-     * @param loanId              unique identifier of the loan
-     * @param loanType            category of the loan (Personal, Mortgage, etc.)
-     * @param requestingClientId  identifier of the requesting client
-     * @param requestedAmount     amount of money requested
-     * @param termMonths          duration of the loan in months
+     * Crea una nueva solicitud de préstamo con estado UNDER_REVIEW.
      */
-    public Loan(int loanId, String loanType, String requestingClientId,
-                Money requestedAmount, int termMonths) {
+    public Loan(LoanType loanType, String requestingClientId,
+                Money requestedAmount, BigDecimal interestRate, int termMonths) {
 
-        validateLoanId(loanId);
-        validateLoanType(loanType);
-        validateClient(requestingClientId);
-        validateRequestedAmount(requestedAmount);
-        validateTerm(termMonths);
+        if (loanType == null) throw new IllegalArgumentException("The loan type is required.");
+        if (requestingClientId == null || requestingClientId.isBlank())
+            throw new IllegalArgumentException("The requesting client ID is required.");
+        if (requestedAmount == null || !requestedAmount.isGreaterThanZero())
+            throw new IllegalArgumentException("The requested amount must be greater than zero.");
+        if (termMonths <= 0)
+            throw new IllegalArgumentException("The term must be greater than zero months.");
 
-        this.loanId = loanId;
-        this.loanType = loanType.trim();
+        this.loanType = loanType;
         this.requestingClientId = requestingClientId.trim();
-        this.requestedAmount = requestedAmount;
+        this.requestedAmount = requestedAmount.getAmount();
+        this.interestRate = interestRate;
         this.termMonths = termMonths;
-        this.status = LoanStatus.UNDER_REVIEW; // Mandatory initial status
+        this.status = LoanStatus.UNDER_REVIEW; // Estado inicial obligatorio
         this.creationDate = LocalDateTime.now();
     }
 
-    // ==================== BUSINESS METHODS (APPROVAL FLOW) ====================
+    // ═══════════════════ MÉTODOS DE NEGOCIO ═══════════════════
 
     /**
-     * Approves the loan. Can only be executed by an Internal Analyst.
-     *
-     * Transition: UNDER_REVIEW → APPROVED
-     *
-     * @param approvedAmount        amount approved by the bank (may be <= requestedAmount)
-     * @param interestRate          annual interest rate defined
-     * @param analystId             ID of the Internal Analyst approving
-     * @param targetAccount         account number where the loan will be disbursed
-     * @throws IllegalStateException if the loan is not UNDER_REVIEW
+     * Aprueba el préstamo. Transición: UNDER_REVIEW → APPROVED.
+     * Solo INTERNAL_ANALYST puede llamar este método (validado en ApproveLoanService).
      */
     public void approve(Money approvedAmount, BigDecimal interestRate,
-                        int analystId, String targetAccount) {
-
+                        Long analystId, String targetAccount) {
         validateTransition(LoanStatus.APPROVED);
-
-        if (approvedAmount == null || !approvedAmount.isGreaterThanZero()) {
+        if (approvedAmount == null || !approvedAmount.isGreaterThanZero())
             throw new IllegalArgumentException("The approved amount must be greater than zero.");
-        }
-        if (interestRate == null || interestRate.compareTo(BigDecimal.ZERO) <= 0) {
+        if (interestRate == null || interestRate.compareTo(BigDecimal.ZERO) <= 0)
             throw new IllegalArgumentException("The interest rate must be greater than zero.");
-        }
 
-        this.approvedAmount = approvedAmount;
+        this.approvedAmount = approvedAmount.getAmount();
         this.interestRate = interestRate;
         this.approverAnalystId = analystId;
         this.disbursementTargetAccount = (targetAccount != null) ? targetAccount.trim() : null;
@@ -117,192 +116,74 @@ public class Loan {
     }
 
     /**
-     * Rejects the loan. Can only be executed by an Internal Analyst.
-     *
-     * Transition: UNDER_REVIEW → REJECTED
-     *
-     * @param analystId ID of the Internal Analyst rejecting
-     * @throws IllegalStateException if the loan is not UNDER_REVIEW
+     * Rechaza el préstamo. Transición: UNDER_REVIEW → REJECTED.
      */
-    public void reject(int analystId) {
+    public void reject(Long analystId) {
         validateTransition(LoanStatus.REJECTED);
-
         this.approverAnalystId = analystId;
-        this.approvalDate = LocalDateTime.now(); // Date of the decision
+        this.approvalDate = LocalDateTime.now();
         this.status = LoanStatus.REJECTED;
     }
 
     /**
-     * Marks the loan as disbursed. Only possible from APPROVED status.
-     *
-     * Transition: APPROVED → DISBURSED
-     *
-     * IMPORTANT: This method only changes the loan status.
-     * The crediting of funds to the target account must be done
-     * in the service layer, since it involves another entity (BankAccount).
-     *
-     * Validations:
-     * - The target account must be defined.
-     * - The approved amount must be > 0.
-     *
-     * @throws IllegalStateException if the loan is not APPROVED or the target account is missing
+     * Marca el préstamo como desembolsado. Transición: APPROVED → DISBURSED.
+     * El acreditamiento del saldo a la cuenta lo hace DisburseLoanService.
      */
     public void disburse() {
         validateTransition(LoanStatus.DISBURSED);
-
-        if (disbursementTargetAccount == null || disbursementTargetAccount.isBlank()) {
+        if (disbursementTargetAccount == null || disbursementTargetAccount.isBlank())
             throw new IllegalStateException(
-                "Cannot disburse loan " + loanId
-                + ": the disbursement target account is not defined."
-            );
-        }
-
-        if (approvedAmount == null || !approvedAmount.isGreaterThanZero()) {
+                "Cannot disburse loan " + loanId + ": target account is not defined.");
+        if (approvedAmount == null || approvedAmount.compareTo(BigDecimal.ZERO) <= 0)
             throw new IllegalStateException(
-                "Cannot disburse loan " + loanId
-                + ": the approved amount must be greater than zero."
-            );
-        }
-
+                "Cannot disburse loan " + loanId + ": approved amount must be > 0.");
         this.disbursementDate = LocalDateTime.now();
         this.status = LoanStatus.DISBURSED;
     }
 
-    /**
-     * Assigns the target account where the loan will be disbursed.
-     * Can be assigned at the time of the request or before disbursement.
-     *
-     * @param accountNumber target account number
-     */
+    /** Asigna la cuenta destino del desembolso. */
     public void assignTargetAccount(String accountNumber) {
-        if (accountNumber == null || accountNumber.isBlank()) {
+        if (accountNumber == null || accountNumber.isBlank())
             throw new IllegalArgumentException("The target account number is required.");
-        }
         this.disbursementTargetAccount = accountNumber.trim();
     }
 
-    // ==================== PRIVATE VALIDATIONS ====================
-
-    /**
-     * Validates that the state transition is allowed according to business rules.
-     */
     private void validateTransition(LoanStatus newStatus) {
-        if (!status.canTransitionTo(newStatus)) {
+        if (!status.canTransitionTo(newStatus))
             throw new IllegalStateException(
                 "State transition not allowed for loan " + loanId
-                + ": " + status.getDescription() + " → " + newStatus.getDescription()
-            );
-        }
+                + ": " + status.getDescription() + " → " + newStatus.getDescription());
     }
 
-    private void validateLoanId(int id) {
-        if (id <= 0) {
-            throw new IllegalArgumentException("The loan ID must be greater than zero.");
-        }
-    }
+    // ═══════════════════ GETTERS ═══════════════════
 
-    private void validateLoanType(String type) {
-        if (type == null || type.isBlank()) {
-            throw new IllegalArgumentException("The loan type is required.");
-        }
-    }
-
-    private void validateClient(String clientId) {
-        if (clientId == null || clientId.isBlank()) {
-            throw new IllegalArgumentException("The requesting client ID is required.");
-        }
-    }
-
-    private void validateRequestedAmount(Money amount) {
-        if (amount == null || !amount.isGreaterThanZero()) {
-            throw new IllegalArgumentException("The requested loan amount must be greater than zero.");
-        }
-    }
-
-    private void validateTerm(int term) {
-        if (term <= 0) {
-            throw new IllegalArgumentException("The loan term must be greater than zero months.");
-        }
-    }
-
-    // ==================== GETTERS ====================
-
-    public int getLoanId() {
-        return loanId;
-    }
-
-    public String getLoanType() {
-        return loanType;
-    }
-
-    public String getRequestingClientId() {
-        return requestingClientId;
-    }
-
-    public Money getRequestedAmount() {
-        return requestedAmount;
-    }
-
-    public Money getApprovedAmount() {
-        return approvedAmount;
-    }
-
-    public BigDecimal getInterestRate() {
-        return interestRate;
-    }
-
-    public int getTermMonths() {
-        return termMonths;
-    }
-
-    public LoanStatus getStatus() {
-        return status;
-    }
-
-    public LocalDateTime getApprovalDate() {
-        return approvalDate;
-    }
-
-    public LocalDateTime getDisbursementDate() {
-        return disbursementDate;
-    }
-
-    public String getDisbursementTargetAccount() {
-        return disbursementTargetAccount;
-    }
-
-    public int getApproverAnalystId() {
-        return approverAnalystId;
-    }
-
-    public LocalDateTime getCreationDate() {
-        return creationDate;
-    }
-
-    // ==================== EQUALS, HASHCODE, TOSTRING ====================
+    public Long getLoanId()                      { return loanId; }
+    public LoanType getLoanType()                { return loanType; }
+    public String getRequestingClientId()        { return requestingClientId; }
+    public BigDecimal getRequestedAmount()       { return requestedAmount; }
+    public BigDecimal getApprovedAmount()        { return approvedAmount; }
+    public BigDecimal getInterestRate()          { return interestRate; }
+    public int getTermMonths()                   { return termMonths; }
+    public LoanStatus getStatus()                { return status; }
+    public LocalDateTime getApprovalDate()       { return approvalDate; }
+    public LocalDateTime getDisbursementDate()   { return disbursementDate; }
+    public String getDisbursementTargetAccount() { return disbursementTargetAccount; }
+    public Long getApproverAnalystId()           { return approverAnalystId; }
+    public LocalDateTime getCreationDate()       { return creationDate; }
 
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
-        Loan loan = (Loan) o;
-        return loanId == loan.loanId;
+        return Objects.equals(loanId, ((Loan) o).loanId);
     }
 
-    @Override
-    public int hashCode() {
-        return Objects.hash(loanId);
-    }
+    @Override public int hashCode() { return Objects.hash(loanId); }
 
     @Override
     public String toString() {
-        return "Loan{" +
-            "loanId=" + loanId +
-            ", loanType='" + loanType + '\'' +
-            ", clientId='" + requestingClientId + '\'' +
-            ", requestedAmount=" + requestedAmount +
-            ", approvedAmount=" + approvedAmount +
-            ", status=" + status +
-            '}';
+        return "Loan{loanId=" + loanId + ", loanType=" + loanType
+            + ", clientId='" + requestingClientId + '\''
+            + ", requestedAmount=$" + requestedAmount + ", status=" + status + '}';
     }
 }
